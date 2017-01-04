@@ -15,7 +15,7 @@ bool CS8416::begin() {
 	Wire.begin();
 	/* Check connection */
 	uint8_t deviceid = getDeviceID();
-	if ( (deviceid != 0x21) || (deviceid != 0x22) || (deviceid != 0x23) || (deviceid != 0x27) || (deviceid != 0x2F) )
+	if ( (deviceid != 0x21) && (deviceid != 0x22) && (deviceid != 0x23) && (deviceid != 0x27) && (deviceid != 0x2F) )
 	{
 		/* No CS8416 detected ... return false */
 		//Serial.println(deviceid, HEX);
