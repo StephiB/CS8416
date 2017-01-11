@@ -19,24 +19,25 @@ enum PinAssignments {
 };
 
 int InState = 0;
-unsigned int Menu    = 0;
-unsigned int input = 0;
-unsigned int brightness = 4;
+
 volatile unsigned int encoderPos = 0;
 unsigned int lastReportedPos = 1;
 unsigned int controlPos = 1;
 static boolean rotating = false;
 
-double SamplF = 0.0000;
+uint8_t brightness = 0;
 
 boolean A_set = false;
 boolean B_set = false;
 boolean lock  = false;
 boolean os    = false;
 boolean mute  = false;
-boolean blind = false;
+boolean tick = false;
 boolean clksw = false;
+boolean alwon = false;
+
 unsigned int freq = 0;
+unsigned int Menu  = 0;
 
 unsigned long long Eight     =   819200000ULL;
 unsigned long long Eleven    =  1128960000ULL;
@@ -44,21 +45,21 @@ unsigned long long Twelve    =  1228800000ULL;
 unsigned long long pll0_freq = 61440000000ULL;
 unsigned long long pll1_freq = 67737600000ULL;
 
+static unsigned int MenuSelect;
 static unsigned int InputSelect;
 static unsigned int FilterSelect;
-static unsigned int clockSwitching;
+static unsigned int ClockSelect;
+static unsigned int BrightSelect;
+static unsigned int ResetDefaults;
+
 const unsigned long PERIOD = 10000;
-
 int DisplayEvent;
-
-
 
 ClickButton btn(clearButton, LOW, CLICKBTN_PULLUP);
 Si5351 CLKGEN;
-SPI_VFD vfd(11, 13, 10);
+SPI_VFD vfd(SCK, MOSI, SS, VFD_BRIGHTNESS25);
 CS8416 SPDIF;
 Timer t;
-
 
 void doEncoderA(){
 	if ( rotating ) delay (1);
@@ -80,8 +81,6 @@ void doEncoderB(){
 	}
 }
 
-
-
 void setup() {
 	
 	CLKGEN.init(SI5351_CRYSTAL_LOAD_10PF, 0, 0);
@@ -92,7 +91,7 @@ void setup() {
 	CLKGEN.output_enable(SI5351_CLK0, 1);
 	
 	vfd.begin(20, 2);
-	vfd.setBrightness(brightness);
+	vfd.setBrightness(2);
 	vfd.setCursor(0, 0);
 	
 	pinMode(encoderPinA, INPUT_PULLUP);
@@ -105,20 +104,24 @@ void setup() {
 	attachPinChangeInterrupt(digitalPinToPCINT(encoderPinA), doEncoderA, CHANGE);
 	attachPinChangeInterrupt(digitalPinToPCINT(encoderPinB), doEncoderB, CHANGE);
 	
-	//attachInterrupt(int0Pin, readErrors, CHANGE);
+	attachInterrupt(int0Pin, readErrors, CHANGE);
 	
 	digitalWrite(rst, LOW);
 	Timer1.initialize(1500000);
 	Timer1.attachInterrupt(activate);
 	
-	DisplayEvent = t.every(10000, displayClear);
+	DisplayEvent = t.every(PERIOD, displayOff);
 	
 	SPDIF.begin();
+
 	delay(50);
 	vfd.clear();
 	vfd.print("@ preheat");
-
+	
+	Serial.begin(19200);
+	Serial.print("go");
 }
+
 void setHighZ(){
 	CLKGEN.output_enable(SI5351_CLK0, 0);
 }
@@ -130,6 +133,7 @@ void set819200(){
 	CLKGEN.output_enable(SI5351_CLK0, 1);
 	freq = 1;
 }
+
 void set112896(){
 	CLKGEN.output_enable(SI5351_CLK0, 0);
 	CLKGEN.pll_reset(SI5351_PLLA);
@@ -144,20 +148,22 @@ void set122880(){
 	CLKGEN.output_enable(SI5351_CLK0, 1);
 	freq = 0;
 }
+
 void activate(){
 	displayClearR();
 	digitalWrite(rst, HIGH);
 	delay(50);
 	SPDIF.initiate();
 }
+
 void getInformation(){
-	if (Menu != 5 && !blind){
+	if (Menu == 0){
 		lock = digitalRead(int0Pin);
 		os   = digitalRead(int1Pin);
 		vfd.setCursor(0, 0);
-		
+
 		clksw = (SPDIF.readRegister(CS8416_CTRL1) >> 7);
-		
+
 		if (!clksw){
 			int val =  SPDIF.readRegister(CS8416_OMCLK_TO_RMCLK);
 			if (val == 0x40) vfd.print("48 kHz");
@@ -184,13 +190,14 @@ void getInformation(){
 			vfd.print(" LOCKED");
 		}
 		vfd.setCursor(1, 0);
-		
-
 	}
+
 }
+
 void readErrors(){
-	
+
 }
+
 void displayClearR(){
 	for (int positionCounter = 0; positionCounter < 30; positionCounter++) {
 		// scroll one position left:
@@ -199,6 +206,7 @@ void displayClearR(){
 		delay(10);
 	}
 }
+
 void displayClearL(){
 	for (int positionCounter = 0; positionCounter < 30; positionCounter++) {
 		// scroll one position left:
@@ -207,23 +215,27 @@ void displayClearL(){
 		delay(10);
 	}
 }
-void displayClear(){
+
+void displayOff(){
 	if (controlPos != encoderPos) {
 		controlPos = encoderPos;
 	}
 	else {
-		blind = true;
-		vfd.clear();
-		vfd.noDisplay();
+		if(!alwon){
+			vfd.noDisplay();
+		}
+		else{
+			vfd.display();
+		}
 	}
 }
+
 void loop()
 {
 	wdt_enable(WDTO_4S);
-	
+
 	btn.Update();
 	t.update();
-	getInformation();
 	vfd.setBrightness(brightness);
 	if (btn.clicks != 0) InState = btn.clicks;
 	rotating = true;
@@ -231,20 +243,46 @@ void loop()
 		Serial.print("Index:");
 		Serial.println(encoderPos, DEC);
 		lastReportedPos = encoderPos;
-		blind = false;
+		vfd.display();
+
+	}
+	// if(btn.clicks == 1) Serial.println(Menu, DEC);
+	if (Menu == 0){
+		getInformation();
+		if(btn.clicks == 1){
+			Menu = 1;
+			displayClearR();
+			encoderPos = 0;
+			controlPos = 1;
+			Menu = 0;
+		}
 	}
 	if (Menu == 1){
-		
+
 		vfd.setCursor(0, 0);
-		vfd.println("Input Select");
+		vfd.println("Menu Select"); Serial.println("Menu Select");
 		vfd.setCursor(1, 0);
-		
-		switch (InputSelect)
+		encoderPos = 1;
+
+		switch (MenuSelect)
 		{
-			case 1:
-			vfd.print("Coaxial 1");
+
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
 			if(btn.clicks == 1){
-				SPDIF.changeInput(0);
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				InputSelect = 1;
+			}
+			break;case 1:
+			vfd.print("Input Selection");Serial.println("Input Selection");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
 				displayClearR();
 				encoderPos = 0;
 				controlPos = 1;
@@ -255,7 +293,8 @@ void loop()
 			}
 			break;
 			case 2:
-			vfd.print("Coaxial 2");
+			vfd.print("Filter Selection");Serial.println("Filter Selection");
+			//todo readout and display current value on row 1
 			if(btn.clicks == 1){
 				SPDIF.changeInput(1);
 				displayClearR();
@@ -268,7 +307,8 @@ void loop()
 			}
 			break;
 			case 3:
-			vfd.print("Optical 1");
+			vfd.print("Reclocking");Serial.println("Reclocking");
+			//todo readout and display current value on row 1
 			if(btn.clicks == 1){
 				SPDIF.changeInput(2);
 				displayClearR();
@@ -281,7 +321,7 @@ void loop()
 			}
 			break;
 			case 4:
-			vfd.print("Optical 2");
+			vfd.print("Optical 2");Serial.println("Optical 2");
 			if(btn.clicks == 1){
 				SPDIF.changeInput(3);
 				displayClearR();
@@ -297,15 +337,104 @@ void loop()
 			break;
 		}
 	}
+
 	if (Menu == 2){
+
+		vfd.setCursor(0, 0);
+		vfd.println("Input Select"); Serial.println("Input Select");
+		vfd.setCursor(1, 0);
+
+		switch (InputSelect)
+		{
+
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				InputSelect = 1;
+			}case 1:
+			vfd.print("Coaxial 1");Serial.println("Coaxial 1");
+			if(btn.clicks == 1){
+				SPDIF.changeInput(0);
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 5 && encoderPos <=9){
+				InputSelect = 2;
+			}
+			break;
+			case 2:
+			vfd.print("Coaxial 2");Serial.println("Coaxial 2");
+			if(btn.clicks == 1){
+				SPDIF.changeInput(1);
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 10 && encoderPos <=14){
+				InputSelect = 3;
+			}
+			break;
+			case 3:
+			vfd.print("Optical 1");Serial.println("Optical 1");
+			if(btn.clicks == 1){
+				SPDIF.changeInput(2);
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 15 && encoderPos <=19){
+				InputSelect = 4;
+			}
+			break;
+			case 4:
+			vfd.print("Optical 2");Serial.println("Optical 2");
+			if(btn.clicks == 1){
+				SPDIF.changeInput(3);
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 20 ){
+				encoderPos = 0;
+				controlPos = 1;
+				InputSelect = 1;
+			}
+			break;
+		}
+	}
+
+	if (Menu == 3){
 
 		vfd.setCursor(0, 0);
 		vfd.println("Filter Select");
 		vfd.setCursor(1, 0);
-		
+
 		switch (FilterSelect)
 		{
-			case 1:
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				FilterSelect = 1;
+			}case 1:
 			vfd.print("Off direct");
 			if(btn.clicks == 1){
 				SPDIF.emphFilter(0);
@@ -376,18 +505,31 @@ void loop()
 		}
 	}
 
-	if (Menu == 3){
-		
+	if (Menu == 4){
+
 		vfd.setCursor(0, 0);
 		vfd.println("Reclocking");
-		vfd.setCursor(0, 0);
-		
-		switch (clockSwitching)
+		vfd.setCursor(1, 0);
+
+		switch (ClockSelect)
 		{
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				ClockSelect = 1;
+			}
 			case 1:
 			vfd.print("Off");
 			if(btn.clicks == 1){
-				setHighZ();
+				//setHighZ();
+				set122880();
 				SPDIF.clockSwitch(0);
 				displayClearR();
 				encoderPos = 0;
@@ -395,7 +537,7 @@ void loop()
 				Menu = 0;
 			}
 			if (encoderPos >= 5 && encoderPos <=9){
-				clockSwitching = 2;
+				ClockSelect = 2;
 			}
 			break;
 			case 2:
@@ -412,7 +554,7 @@ void loop()
 				Menu = 0;
 			}
 			if (encoderPos >= 10 && encoderPos <=14){
-				clockSwitching = 3;
+				ClockSelect = 3;
 			}
 			break;
 			case 3:
@@ -428,7 +570,7 @@ void loop()
 				Menu = 0;
 			}
 			if (encoderPos >= 15 && encoderPos <=19){
-				clockSwitching = 4;
+				ClockSelect = 4;
 			}
 			break;
 			case 4:
@@ -446,25 +588,162 @@ void loop()
 			if (encoderPos > 20){
 				encoderPos = 0;
 				controlPos = 1;
-				clockSwitching = 1;
+				ClockSelect = 1;
 			}
 			break;
 		}
 	}
-	if (Menu == 4){
-		vfd.print("Reset to defaults");
-		if(btn.clicks == 1){
-			displayClearR();
-			soft_restart();
+
+	if (Menu == 5){
+		vfd.setCursor(0, 0);
+		vfd.println("Set Brightness");
+		vfd.setCursor(1, 0);
+
+		switch (BrightSelect)
+		{
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				BrightSelect = 1;
+			}
+			break;
+
+			case 1:
+			vfd.print("100%");
+			if(btn.clicks == 1){
+				brightness = 0;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 5 && encoderPos <=9){
+				BrightSelect = 2;
+			}
+			break;
+
+			case 2:
+			vfd.print("75%");
+			if(btn.clicks == 1){
+				brightness = 1;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 10 && encoderPos <=14){
+				BrightSelect = 3;
+			}
+			break;
+
+			case 3:
+			vfd.print("50%");
+			if(btn.clicks == 1){
+				brightness = 2;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 15 && encoderPos <=19){
+				BrightSelect = 4;
+			}
+			break;
+
+			case 4:
+			vfd.print("25%");
+			if(btn.clicks == 1){
+				brightness = 3;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 20 && encoderPos <=24){
+				BrightSelect = 5;
+			}
+			break;
+
+			case 5:
+			vfd.print("Always On");
+			if(btn.clicks == 1){
+				alwon = true;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos >= 25 && encoderPos <=29){
+				encoderPos = 0;
+				controlPos = 1;
+				BrightSelect = 1;
+			}
+			break;
+
+			case 6:
+			vfd.print("Auto Off");
+			if(btn.clicks == 1){
+				alwon = false;
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 30){
+				encoderPos = 0;
+				controlPos = 1;
+				BrightSelect = 1;
+			}
+			break;
 		}
 	}
-	if (Menu == 5){
-		
-		vfd.clear();
-		vfd.noDisplay();
+	if (Menu == 6){
+
+		vfd.setCursor(0, 0);
+		vfd.println("Reset to Defaults");
+		vfd.setCursor(1, 0);
+
+		switch (ResetDefaults)
+		{
+			case 0:
+			vfd.print("Back");Serial.println("IBack");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				encoderPos = 0;
+				controlPos = 1;
+				Menu = 0;
+			}
+			if (encoderPos > 0 ){
+				ResetDefaults = 1;
+			}
+			break;
+
+			case 1:
+			vfd.print("Reset to defaults!!");
+			//todo readout and display current value on row 1
+			if(btn.clicks == 1){
+				displayClearR();
+				soft_restart();
+			}
+			if (encoderPos > 10 ){
+				ResetDefaults = 0;
+				encoderPos = 0;
+				controlPos = 1;
+			}
+			break;
+		}
 	}
+
 	if(InState == 2) {
-		Menu += 1;
+
 	}
 	if(InState == -1) {
 		mute = !mute;
