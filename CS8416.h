@@ -7,8 +7,9 @@
 #include "Arduino.h"
 #else
 #include "WProgram.h"
-#endif 
+#endif
 #include <Wire.h>
+#include <SPI.h>
 
 
 //  Start-of-communication byte
@@ -186,9 +187,11 @@
 #define GPO_HRMCK				(0xD)     //    512*Fs
 
 
-
 class CS8416  {
 	public:
+
+	CS8416(uint8_t cs);
+	CS8416();
 
 	bool       begin(void);
 	uint8_t    getDeviceID(void);
@@ -203,4 +206,6 @@ class CS8416  {
 
 	inline uint8_t  i2cread(void);
 	inline void     i2cwrite(uint8_t x);
+	uint8_t  _cs;
+	boolean interface;
 };
